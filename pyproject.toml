@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "javpi"
+version = "0.1.0"
+description = "Voice AI assistant with full OS control"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=0.2.0",
+    "mss>=9.0.1",
+    "Pillow",
+    "opencv-python>=4.9.0",
+    "python-dotenv>=1.0.0",
+    "sounddevice>=0.4.6",
+    "numpy>=1.24.0",
+    "pyautogui>=0.9.54",
+    "requests>=2.31.0",
+    "annotated-types>=0.6.0",
+    "anyio>=4.0.0",
+    "pywin32>=306; sys_platform == 'win32'",
+    "pyperclip>=1.8.2",
+    "psutil>=5.9.0",
+    "pygetwindow>=0.0.9",
+    "pywinauto>=0.6.8; sys_platform == 'win32'",
+    "easyocr>=1.7.1",
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+]
+[project.optional-dependencies]
+dev = [
+    "black>=24.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+javpi-ocr-init = "JavPI.tools.bootstrap_ocr:main"
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+select = ["E", "F", "I", "N", "W"]
