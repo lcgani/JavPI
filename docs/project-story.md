@@ -24,60 +24,35 @@ The core runtime is built around three parallel loops in `src/JavPI/core/javpi.p
 
 ### System architecture
 
-```mermaid
-flowchart LR
-  User["User"] --> Mic["Microphone"]
-  Desktop["Desktop screen"] --> Screen["Screen capture"]
-  Mic --> Core["JavPI runtime"]
-  Screen --> Core
-  Core --> Gemini["Gemini Live API<br/>via google-genai"]
-  Gemini --> Core
-  Core --> Speaker["Audio playback"]
-  Speaker --> User
-  Gemini --> Tools["Tool registry"]
-  Tools --> Core
-  Tools --> Memory["Memory service<br/>SQLite + optional Gemini embeddings"]
-  Core --> Reporter["Cloud reporter"]
-  Reporter --> Backend["Cloud Run backend"]
-  Backend --> Firestore["Firestore"]
-```
+![JavPI system architecture](https://raw.githubusercontent.com/lcgani/JavPI/main/docs/images/System-architecture.png)
 
-The tool layer is deliberately broad because desktop interaction is messy. Browser actions, UI targeting, and operating system actions all have different failure modes, so the registry normalizes results before they go back to the model.
+The system architecture image shows the real boundary in the code. The user and desktop screen sit on the left, the JavPI runtime is the center of the system, and everything timing-sensitive stays close to that runtime.
 
-The memory layer is deliberately narrow. It stores structured records in SQLite and scores them locally. If a Gemini API key is present, it can also request embeddings through the same SDK and blend semantic recall into the ranking step.
+Microphone audio and screen frames both feed the runtime. From there, the runtime sends multimodal input to Gemini Live through `google-genai`, receives audio and tool calls back, and routes those results either to speaker playback or into the tool registry.
+
+The diagram also makes the side paths clear. Tool execution stays local because desktop control needs direct access to the operating system, and the memory service hangs off the tool registry because it is invoked as part of the agent's action surface. The cloud reporter is a separate path that sends session data to Cloud Run and Firestore without sitting in the real-time loop.
+
+### Agent architecture
+
+![JavPI agent architecture](https://raw.githubusercontent.com/lcgani/JavPI/main/docs/images/hackathon-gem-1.png)
+
+This diagram is the sequence-level view of the agent. It shows the runtime as a coordinator between the capture layers, the Gemini Live client, the model session, the tool registry, playback, and the cloud reporting path.
+
+The important detail here is the direction of control. Audio chunks and screen frames move into `JavPI`, then into `GeminiLiveClient`, and then into Gemini Live as realtime multimodal input. The response path comes back as streamed events: model audio, transcripts, and tool calls.
+
+When a tool is requested, the runtime does not let the model talk directly to the desktop. It routes the request through the tool registry, normalizes the result, and sends the tool response back into the live session. That keeps desktop control, verification, and model output in one controlled path instead of scattering them across unrelated components.
+
+The cloud path is also explicit in the diagram. Session and tool events move out through `CloudReporter`, then into the Cloud Run API, and finally into Firestore. That gives the system a Google Cloud reporting path without putting network persistence in the critical interaction loop.
 
 ### Core loop
 
-```mermaid
-flowchart TD
-  A["Start session"] --> B["Connect Gemini Live"]
-  B --> C["Run three loops in parallel"]
+![JavPI core loop](https://raw.githubusercontent.com/lcgani/JavPI/main/docs/images/core-loop.png)
 
-  C --> D["Mic loop"]
-  C --> E["Screen loop"]
-  C --> F["Receive loop"]
+The core loop image shows the actual control flow in the runtime. The session starts, connects to Gemini Live, and then fans out into three loops that run in parallel instead of serializing audio, vision, and tool work into a single path.
 
-  D --> D1["Read mic chunk"]
-  D1 --> D2["Speech and echo gating"]
-  D2 --> D3["Send audio to Gemini"]
+The mic loop is responsible for reading audio, applying speech and echo gating, and sending valid user audio upstream. The screen loop captures the full screen, encodes it as JPEG, and keeps the model's visual context current. The receive loop is the operational center: it handles model audio, transcripts, tool calls, result normalization, and the follow-up screenshot after a tool has run.
 
-  E --> E1["Capture full screen"]
-  E1 --> E2["Encode JPEG"]
-  E2 --> E3["Send image to Gemini"]
-
-  F --> F1["Receive audio, transcripts, tool calls"]
-  F1 -->|audio| F2["Queue speaker playback"]
-  F1 -->|tool call| F3["Execute tool"]
-  F3 --> F4["Normalize result"]
-  F4 --> F5["Send tool response"]
-  F5 --> F6["Send fresh screenshot"]
-
-  C --> G{"Loop failure?"}
-  G -->|yes| H["Cancel sibling tasks"]
-  H --> I["Reconnect with backoff"]
-```
-
-The other important part is grounding. The agent does not just execute tools and hope the model describes them correctly. Tool results are normalized into explicit states such as confirmed, executed but unverified, and failed, and the runtime can override model phrasing when it overstates what happened.
+The failure branch on the right matters just as much as the happy path. If one loop fails, the runtime cancels sibling tasks and reconnects with backoff instead of leaving the session half-alive. Grounding sits on top of the tool path, so the agent does not just execute a tool and move on; it records whether the action was confirmed, unverified, or failed and uses that state to keep the spoken output aligned with reality.
 
 ## Challenges we ran into
 
